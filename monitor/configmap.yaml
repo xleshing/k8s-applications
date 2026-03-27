@@ -1,0 +1,167 @@
+# prometheus-config
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: monitoring
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+
+    scrape_configs:
+      - job_name: "nodes"
+        file_sd_configs:
+          - files:
+              - /etc/prometheus/nodes.yml
+
+      - job_name: "gpu_nodes"
+        file_sd_configs:
+          - files:
+              - /etc/prometheus/gpu.yml
+
+      - job_name: "http_probe"
+        metrics_path: /probe
+        params:
+          module: [http_2xx]
+        file_sd_configs:
+          - files:
+              - /etc/prometheus/probes.yml
+        relabel_configs:
+          - source_labels: [__address__]
+            target_label: __param_target
+          - source_labels: [__param_target]
+            target_label: instance
+          - target_label: __address__
+            replacement: blackbox-exporter.monitoring.svc:9115
+
+  nodes.yml: |
+    - targets: ["192.168.0.2:9100"]
+      labels:
+        alias: raspi
+    - targets: ["192.168.0.3:9100"]
+      labels:
+        alias: optiplex
+    - targets: ["192.168.9.3:9100"]
+      labels:
+        alias: webcam
+    - targets: ["192.168.0.100:9100"]
+      labels:
+        alias: x470
+    - targets: ["192.168.9.5:9100"]
+      labels:
+        alias: x870
+
+  gpu.yml: |
+    - targets: ["192.168.0.100:9400"]
+      labels:
+        alias: x470
+    - targets: ["192.168.9.5:9400"]
+      labels:
+        alias: x870
+
+  probes.yml: |
+    - targets: ["http://192.168.0.2:9100/metrics"]
+      labels:
+        alias: raspi
+    - targets: ["http://192.168.0.3:9100/metrics"]
+      labels:
+        alias: optiplex
+    - targets: ["http://192.168.9.3:9100/metrics"]
+      labels:
+        alias: webcam
+    - targets: ["http://192.168.0.100:9100/metrics"]
+      labels:
+        alias: x470
+    - targets: ["http://192.168.9.5:9100/metrics"]
+      labels:
+        alias: x870
+---
+# blackbox-config
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: blackbox-config
+  namespace: monitoring
+data:
+  config.yml: |
+    modules:
+      http_2xx:
+        prober: http
+        timeout: 5s
+        http:
+          method: GET
+          preferred_ip_protocol: "ip4"
+
+---
+# grafana-ini
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-ini
+  namespace: monitoring
+data:
+  grafana.ini: |
+    [auth.anonymous]
+    enabled = false
+
+    [auth.ldap]
+    enabled = true
+    config_file = /etc/grafana/ldap.toml
+    allow_sign_up = true
+
+    [log]
+    filters = ldap:debug
+
+    [server]
+    root_url = %(protocol)s://%(domain)s/
+    serve_from_sub_path = false 
+
+
+---
+# grafana-ldap
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-ldap
+  namespace: monitoring
+data:
+  ldap.toml: |
+    [[servers]]
+    host = "ipa.ipa.ican"
+    port = 389
+    use_ssl = false
+    start_tls = true
+    ssl_skip_verify = false
+
+    root_ca_cert = "/etc/ipa/ca.crt"
+
+    bind_dn = "uid=grafana,cn=users,cn=accounts,dc=ipa,dc=ican"
+    bind_password = "CJ:^g4mp6"
+
+    search_filter = "(|(uid=%s)(mail=%s)(krbPrincipalName=%s@IPA.ICAN))"
+    search_base_dns = ["cn=users,cn=accounts,dc=ipa,dc=ican"]
+
+    [servers.attributes]
+    member_of = "memberOf"
+    username = "uid"
+    email = "mail"
+    name = "cn"
+    surname = "sn"
+    given_name = "givenName"
+
+    # ======== 群組對應到 Grafana 角色（依你實際的群組調整）========
+    [[servers.group_mappings]]
+    group_dn = "cn=grafana-admins,cn=groups,cn=accounts,dc=ipa,dc=ican"
+    org_role = "Admin"
+    grafana_admin = true
+
+    [[servers.group_mappings]]
+    group_dn = "cn=ipausers,cn=groups,cn=accounts,dc=ipa,dc=ican"
+    org_role = "Viewer"
+
+    # 萬用：不在上述群組的，給 Viewer
+    [[servers.group_mappings]]
+    group_dn = "*"
+    org_role = "Viewer"
+
